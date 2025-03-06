@@ -1,0 +1,53 @@
+name: rs-build
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      # TODO: docker login
+      # image: artifactory.dev.redislabs.com/core-docker-dev/rs-devcontainer:jammy.v0.0.3
+      image: rs-dev:jammy
+      # TODO: bind mount /home/dev/.cache from host for act caching?
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          cd rs-build
+
+          package_name=$(cargo metadata --format-version=1 | jq -r '.packages[0].name')
+          package_version=$(cargo metadata --format-version=1 | jq -r '.packages[0].version')
+
+          echo "ARTIFACT_NAME=${package_name}-${package_version}" >> $GITHUB_ENV
+          echo "ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')" >> $GITHUB_ENV
+
+          # TODO: Add this explicitly to the dev container, e.g. in /etc/devcontainer.
+          # This can be similar to /etc/os-release, but use our own short name for the distro.
+          # We may also want to use Docker Labels that can be read inside the container.
+          # To get container id: cat /proc/self/mountinfo | grep docker
+          # To inspect: curl --unix-socket /var/run/docker.sock http://localhost/containers/$CONTAINER_ID/json | jq
+          # Note that in vscode etc. a new image is built from the upstream devcontainer image, so we need
+          # to make sure we use the right image for the cache/artifact key.
+          echo "DISTRO=jammy" >> $GITHUB_ENV
+
+      - name: Cache build dir
+        id: cache-build
+        uses: actions/cache@v4
+        with:
+          path: .
+          key: ${{ env.ARTIFACT_NAME }}-${{ env.ARCH }}-${{ env.DISTRO }}-build
+
+      - name: RS Build
+        run: |
+          cd rs-build
+          echo "Building ${ARTIFACT_NAME}"
+          make
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ env.ARCH }}-${{ env.DISTRO }}
+          path: /opt/redislabs
+          if-no-files-found: error
